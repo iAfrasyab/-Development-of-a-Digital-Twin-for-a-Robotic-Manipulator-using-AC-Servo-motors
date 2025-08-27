@@ -1,0 +1,10 @@
+<library path="robot_2030a_controller">
+    <class name="robot_2030a_controller/Robot_2030aInterface"
+      type="robot_2030a_controller::Robot_2030aInterface"
+      base_class_type="hardware_interface::SystemInterface"
+    >
+      <description>
+        Robot 2030a Hardware Interface
+      </description>
+    </class>
+  </library>
