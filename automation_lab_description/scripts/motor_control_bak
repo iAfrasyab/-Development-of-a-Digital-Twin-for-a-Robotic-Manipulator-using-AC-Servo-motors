@@ -1,0 +1,159 @@
+#!/usr/bin/env python3
+
+import RPi.GPIO as GPIO
+import time
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import Float64
+import numpy as np
+from std_msgs.msg import Float64MultiArray
+
+# Pin Definitions for Motor Control
+PUL_PIN = 18    # Pulse signal pin for AC servo (GPIO18)
+DIR_PIN = 23    # Direction signal pin for AC servo (GPIO23)
+ENA_PIN = 24    # Enable signal pin for AC servo (optional, GPIO24)
+
+# Pin Definitions for KY-040 Encoder
+CLK = 17        # Encoder Clock pin (GPIO17)
+DT = 27         # Encoder Data pin (GPIO27)
+
+# PID Control Variables
+kp = 0.05       # Proportional gain
+ki = 0.1        # Integral gain
+kd = 0.5        # Derivative gain
+prevError = 0.0
+integral = 0.0
+# Encoder Variables
+encoderPos = 0  # Current encoder position (pulses)
+targetAngle = 0  # Target angle in degrees
+angle = 0        # Calculated angle in degrees
+lastStateCLK = GPIO.LOW
+
+# Encoder Setup
+pulsesPerRevolution = 40   # Adjust based on your encoder
+degreesPerPulse = 360 / pulsesPerRevolution  # Degrees per pulse
+stopThreshold = 2          # Threshold for stopping motor (in degrees)
+
+# Setup GPIO
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(PUL_PIN, GPIO.OUT)
+GPIO.setup(DIR_PIN, GPIO.OUT)
+GPIO.setup(ENA_PIN, GPIO.OUT)
+GPIO.setup(CLK, GPIO.IN)
+GPIO.setup(DT, GPIO.IN)
+class ServoMotorController(Node):
+    def __init__(self):
+        super().__init__('servo_motor_controller')
+
+        # Subscriber for the target angle
+        self.target_angle = 0.0  # Default target angle
+        self.target_angle_subscriber_ = self.create_subscription(
+        Float64,
+        'target_angle',
+        self.target_angle_callback,
+        10
+        )
+
+        # Publisher for the encoder angle
+        self.encoder_publisher_ = self.create_publisher(Float64, 'encoder_angle', 10)
+
+        # Timer to publish encoder angle periodically
+       	self.timer = self.create_timer(0.1, self.publish_encoder_angle)
+
+        # Attach interrupt for encoder
+
+        GPIO.add_event_detect(CLK, GPIO.BOTH, callback=self.updateEncoder)
+    def publish_encoder_angle(self):
+        return    	
+    def target_angle_callback(self, angle_msg):
+        global targetAngle
+        print (f"Angle Target Recived from Motion Planner {angle_msg.data}")
+        targetAngle_rad = angle_msg.data
+        targetAngle = targetAngle_rad * (180/3.14)
+        print ("In Control Mode")
+        global integral
+        global prevError
+        angle = encoderPos * degreesPerPulse  # Calculate angle in degrees this code controls an AC servo motor using a PID control loop, where the 
+        angle_rad = angle * (3.14/180)
+        angle_msg = Float64()
+        angle_msg.data = angle_rad
+        self.encoder_publisher_.publish(angle_msg)
+        # Calculate current angle from encoder position
+        print (f"Current Angle: {angle}")
+        # Calculate error in angle
+        error = targetAngle - angle
+        print (f"Error in Reading {error}")
+        # Debugging output for error and angle
+
+        print (f"Target Angle: {targetAngle}")
+        # If error is within the stop threshold, stop the motor
+       	if abs(error) < stopThreshold:
+            # Stop motor if within threshold
+            GPIO.output(PUL_PIN, GPIO.LOW)
+            print("Motor stopped: Target reached.")
+        else:
+            # PID Calculations
+            integral += error
+            derivative = error - prevError
+            output = kp * error + ki * integral + kd * derivative
+
+            # Control direction based on the sign of the error
+            if error > 0:
+                GPIO.output(DIR_PIN, GPIO.HIGH)  # Clockwise (forward)
+                print("Moving Clockwise")
+            else:
+                GPIO.output(DIR_PIN, GPIO.LOW)   # Counterclockwise (reverse)
+                print("Moving Counterclockwise")
+
+                # Generate pulses for motor (scaled to control speed)
+            pulses = min(abs(int(output)), 255)  # Ensure output is within a valid range
+          
+            self.moveServo(pulses)	
+
+        # Update previous error
+        prevError = error
+
+        # Wait a short time for stability
+         
+    def updateEncoder(self, channel):
+        global encoderPos, lastStateCLK
+        stateCLK = GPIO.input(CLK)
+        if stateCLK != lastStateCLK:
+            if GPIO.input(DT) != stateCLK:
+                encoderPos += 1  # Rotate clockwise
+            else:
+                encoderPos -= 1  # Rotate counterclockwise
+        lastStateCLK = stateCLK
+    def moveServo(self, pulses):
+        print ("Moving Motor")
+        for _ in range(pulses):
+            GPIO.output(PUL_PIN, GPIO.HIGH)
+            time.sleep(0.0001)  # Adjust pulse width for speed control
+            GPIO.output(PUL_PIN, GPIO.LOW)
+            time.sleep(0.0001)  # Adjust pulse width for speed control
+    def control_motor(self):
+        return
+        	
+
+# Attach the interrupt for encoder
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = ServoMotorController()
+    print ("Node Started")
+    try:
+        while rclpy.ok():
+            # Continuously control the motor
+            rclpy.spin_once(node)
+    except KeyboardInterrupt:
+        node.get_logger().info("Shutting down servo motor controller.")
+    finally:
+        node.destroy_node()
+        GPIO.cleanup()  # Clean up GPIO at the end of the program
+        rclpy.shutdown()
+
+if __name__ == '__main__':
+    main()
+
+

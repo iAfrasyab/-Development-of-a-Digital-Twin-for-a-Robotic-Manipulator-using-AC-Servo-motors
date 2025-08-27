@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="automation_lab_description">
+    <xacro:arg name="initial_positions_file" default="initial_positions.yaml" />
+
+    <!-- Import automation_lab_description urdf file -->
+    <xacro:include filename="$(find automation_lab_description)/urdf/automation_lab_description.urdf" />
+
+    <!-- Import control_xacro -->
+    <xacro:include filename="automation_lab_description.ros2_control.xacro" />
+
+
+    <xacro:automation_lab_description_ros2_control name="FakeSystem" initial_positions_file="$(arg initial_positions_file)"/>
+
+</robot>

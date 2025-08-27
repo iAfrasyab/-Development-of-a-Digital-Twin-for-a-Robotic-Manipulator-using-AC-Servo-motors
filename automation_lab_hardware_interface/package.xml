@@ -1,0 +1,14 @@
+<package format="3">
+  <name>automation_lab_hardware_interface</name>
+  <version>0.1.0</version>
+  <description>Hardware interface for automation lab robotic arm</description>
+  <maintainer email="user@example.com">Your Name</maintainer>
+  <license>Apache 2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>rclcpp</depend>
+  <depend>hardware_interface</depend>
+  <depend>pluginlib</depend>
+  <depend>rclcpp_lifecycle</depend>
+</package>
+

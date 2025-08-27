@@ -1,0 +1,77 @@
+cmake_minimum_required(VERSION 3.5)
+project(automation_lab_hardware_interface)
+
+# Find dependencies
+find_package(ament_cmake REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(hardware_interface REQUIRED)
+find_package(pluginlib REQUIRED)
+
+# Add the library
+add_library(${PROJECT_NAME} SHARED src/automation_lab_hardware_interface.cpp)
+
+# Include directories
+target_include_directories(${PROJECT_NAME} PRIVATE include)
+
+# Link dependencies
+ament_target_dependencies(${PROJECT_NAME}
+    rclcpp
+    hardware_interface
+    pluginlib
+)
+
+# Pluginlib export
+pluginlib_export_plugin_description_file(hardware_interface hardware_interface_plugins.xml)
+
+# Install targets
+install(
+    TARGETS ${PROJECT_NAME}
+    LIBRARY DESTINATION lib
+)
+
+install(
+  TARGETS ${PROJECT_NAME}
+  DESTINATION lib
+)
+install(
+  DIRECTORY include/
+  DESTINATION include
+)
+
+# Install include directory
+
+# Install plugin description file
+install(
+    FILES hardware_interface_plugins.xml
+    DESTINATION share/${PROJECT_NAME}
+)
+
+ament_export_include_directories(
+  include
+)
+ament_export_libraries(
+  ${PROJECT_NAME}
+)
+
+# Install launch files
+install(
+    DIRECTORY launch
+    DESTINATION share/${PROJECT_NAME}
+)
+
+# Install configuration files
+install(
+    DIRECTORY config
+    DESTINATION share/${PROJECT_NAME}
+)
+
+
+ament_export_dependencies(
+  rclcpp
+  hardware_interface
+  pluginlib
+
+)
+# Ament package
+ament_package()
+

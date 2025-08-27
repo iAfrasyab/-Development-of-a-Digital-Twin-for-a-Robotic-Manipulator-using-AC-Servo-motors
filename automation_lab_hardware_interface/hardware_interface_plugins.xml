@@ -1,0 +1,6 @@
+<library path="automation_lab_hardware_interface">
+  <class name="automation_lab_hardware_interface/AutomationLabHardware"
+         type="automation_lab_hardware_interface::AutomationLabHardware"
+         base_class_type="hardware_interface::SystemInterface" />
+</library>
+

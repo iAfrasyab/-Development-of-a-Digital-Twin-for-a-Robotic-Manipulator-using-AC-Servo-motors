@@ -1,0 +1,163 @@
+#!/usr/bin/env python3
+
+import RPi.GPIO as GPIO
+import time
+import threading
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import Float64
+import numpy as np
+
+# === GPIO Setup ===
+GPIO.setwarnings(False)
+GPIO.setmode(GPIO.BCM)
+
+# === Motor Pin Config ===
+MOTORS = {
+    1: {"PUL": 18, "DIR": 23, "ENA": 24, "CLK": 17, "DT": 27, "LSW": 3},
+    2: {"PUL": 5,  "DIR": 6,  "ENA": 13, "CLK": 19, "DT": 26, "LSW": 11},
+    3: {"PUL": 16, "DIR": 20, "ENA": 21, "CLK": 22, "DT": 10, "LSW": 12},
+}
+
+# === Control Variables ===
+pulsesPerRev = 40
+radiansPerPulse = (2 * np.pi) / pulsesPerRev
+stopThreshold = 0.1
+
+encoderPos = {1: 0, 2: 0, 3: 0}
+lastCLK = {}
+homed = {1: False, 2: False, 3: False}
+targetAngle = {1: None, 2: None, 3: None}
+integral = {1: 0.0, 2: 0.0, 3: 0.0}
+prevError = {1: 0.0, 2: 0.0, 3: 0.0}
+
+# === PID Tuning ===
+kp = 0.02
+ki = 0.01
+kd = 0.02
+
+# === GPIO Setup ===
+for m, pins in MOTORS.items():
+    GPIO.setup(pins["PUL"], GPIO.OUT)
+    GPIO.setup(pins["DIR"], GPIO.OUT)
+    GPIO.setup(pins["ENA"], GPIO.OUT)
+    GPIO.setup(pins["CLK"], GPIO.IN)
+    GPIO.setup(pins["DT"], GPIO.IN)
+    GPIO.setup(pins["LSW"], GPIO.IN, pull_up_down=GPIO.PUD_UP)
+    GPIO.output(pins["ENA"], GPIO.HIGH)
+    GPIO.output(pins["DIR"], GPIO.HIGH)  # Homing direction
+    lastCLK[m] = GPIO.input(pins["CLK"])
+
+# === Encoder ISR Setup ===
+def make_encoder_callback(motor):
+    def callback(channel):
+        clk = GPIO.input(MOTORS[motor]["CLK"])
+        dt = GPIO.input(MOTORS[motor]["DT"])
+        if clk != lastCLK[motor]:
+            encoderPos[motor] += 1 if dt != clk else -1
+        lastCLK[motor] = clk
+    return callback
+
+for m in MOTORS:
+    GPIO.add_event_detect(MOTORS[m]["CLK"], GPIO.BOTH, callback=make_encoder_callback(m))
+
+class TripleMotorController(Node):
+    def __init__(self):
+        super().__init__('triple_motor_controller')
+
+        # Subscribers
+        self.create_subscription(Float64, 'target_angle_1', lambda msg: self.set_target(1, msg), 10)
+        self.create_subscription(Float64, 'target_angle_2', lambda msg: self.set_target(2, msg), 10)
+        self.create_subscription(Float64, 'target_angle_3', lambda msg: self.set_target(3, msg), 10)
+
+        # Publishers
+        self.encoder_publishers = {
+            1: self.create_publisher(Float64, 'encoder_angle_1', 10),
+            2: self.create_publisher(Float64, 'encoder_angle_2', 10),
+            3: self.create_publisher(Float64, 'encoder_angle_3', 10)
+        }
+
+        self.create_timer(0.1, self.publish_encoder_angles)
+
+        # Start homing all motors
+        for m in MOTORS:
+            threading.Thread(target=self.home_motor, args=(m,), daemon=True).start()
+
+    def home_motor(self, motor):
+        self.get_logger().info(f"🏁 Homing Motor {motor}...")
+
+        while not homed[motor]:
+            if GPIO.input(MOTORS[motor]["LSW"]) == GPIO.LOW:
+                GPIO.output(MOTORS[motor]["PUL"], GPIO.LOW)
+                encoderPos[motor] = 0
+                homed[motor] = True
+                self.get_logger().info(f"✅ Motor {motor} homed.")
+                break
+            self.move_motor(motor, 5, speed=0.0006)
+            time.sleep(0.01)
+
+    def set_target(self, motor, msg):
+        if not homed[motor]:
+            self.get_logger().warn(f"⚠ Motor {motor} not homed.")
+            return
+        targetAngle[motor] = msg.data
+        self.get_logger().info(f"🎯 Target angle for Motor {motor}: {msg.data:.2f} rad")
+        threading.Thread(target=self.control_motor, args=(motor,), daemon=True).start()
+
+    def control_motor(self, motor):
+        stable_count = 0
+        last_angle = None
+
+        while True:
+            current = encoderPos[motor] * radiansPerPulse
+            error = targetAngle[motor] - current
+
+            self.get_logger().info(f"[M{motor}] Current: {current:.3f} | Target: {targetAngle[motor]:.3f} | Err: {error:.3f}")
+
+            if abs(error) < stopThreshold:
+                if last_angle and abs(current - last_angle) < radiansPerPulse:
+                    stable_count += 1
+                else:
+                    stable_count = 0
+                last_angle = current
+                if stable_count >= 3:
+                    GPIO.output(MOTORS[motor]["PUL"], GPIO.LOW)
+                    self.get_logger().info(f"✅ Motor {motor} reached target.")
+                    break
+
+            integral[motor] += error
+            derivative = error - prevError[motor]
+            output = kp * error + ki * integral[motor] + kd * derivative
+            prevError[motor] = error
+
+            direction = GPIO.HIGH if error > 0 else GPIO.LOW
+            GPIO.output(MOTORS[motor]["DIR"], direction)
+            pulses = max(min(abs(int(output)), 80), 1)
+            self.move_motor(motor, pulses, speed=0.0006)
+
+    def move_motor(self, motor, pulses, speed=0.0006):
+        for _ in range(pulses):
+            GPIO.output(MOTORS[motor]["PUL"], GPIO.HIGH)
+            time.sleep(speed)
+            GPIO.output(MOTORS[motor]["PUL"], GPIO.LOW)
+            time.sleep(speed)
+
+    def publish_encoder_angles(self):
+        for m in MOTORS:
+            angle = encoderPos[m] * radiansPerPulse
+            self.encoder_publishers[m].publish(Float64(data=angle))
+
+def main():
+    rclpy.init()
+    node = TripleMotorController()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        GPIO.cleanup()
+        rclpy.shutdown()
+
+if __name__ == '__main__':
+    main()
